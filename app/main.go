@@ -79,7 +79,7 @@ func main() {
 	}
 	log.Println("PostgreSQL is ready!")
 
-	// API Gin
+	// API Gin router
 	r := gin.Default()
 
 	// Tạo sản phẩm
@@ -104,20 +104,37 @@ func main() {
 				return
 			}
 	
-			// Phản hồi lỗi
+			// error
 			c.JSON(http.StatusBadRequest, gin.H{"status": "Failed", "reason": errorMessage})
 			return
 		}
-		// Gửi thông điệp vào RabbitMQ
-		message := requestBody.Name
-		err := sendMessage("exchange1", "routingKey1", message)
+
+		// Insert product into database
+		query := "INSERT INTO products (name, price) VALUES ($1, $2) RETURNING id"
+		var productID int
+		err := db.QueryRow(query, requestBody.Name, requestBody.Price).Scan(&productID)
+		if err != nil {
+			log.Printf("Failed to insert product into database: %v", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to save product"})
+			return
+		}
+	
+		// Gửi message vào RabbitMQ
+		message := fmt.Sprintf("Product ID %d created: %s", productID, requestBody.Name)
+		err = sendMessage("exchange1", "routingKey1", message)
 		if err != nil {
 			log.Printf("Failed to send message: %v", err)
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to process request"})
 			return
 		}
-
-		c.JSON(http.StatusOK, gin.H{"status": "Product created successfully", "name": requestBody.Name})
+	
+		// Respond success
+		c.JSON(http.StatusOK, gin.H{
+			"status": "Product created successfully",
+			"id":     productID,
+			"name":   requestBody.Name,
+			"price":  requestBody.Price,
+		})
 	})
 
 	// Chạy API
